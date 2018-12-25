@@ -1,10 +1,10 @@
 package main
 
-type Gpu struct {
-	util      float64
-	mem       uint
-	model     string
-	mem_total uint
-	used      bool
-	temp      uint
+type GPUtype struct {
+	Model    string `json:"model"`
+	Used     bool   `json:"used"`
+	MemTotal int64  `json:"mem_total"`
+	Util     int64  `json:"util"`
+	Mem      int64  `json:"mem"`
+	Temp     int64  `json:"temp"`
 }

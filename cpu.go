@@ -1,8 +1,8 @@
 package main
 
-type Cpu struct {
-	util  float64
-	temp  uint
-	total uint
-	alloc uint
+type CPUtype struct {
+	Total int64   `json:"total"`
+	Alloc int64   `json:"alloc"`
+	Util  float64 `json:"util"`
+	Temp  int64   `json:"temp"`
 }
