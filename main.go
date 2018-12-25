@@ -1,44 +1,76 @@
 package main
 
+/*
+#cgo CFLAGS: -g -Wall
+#cgo LDFLAGS: -lslurm
+
+#include <slurm/slurm.h>
+*/
+import "C"
 import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	//"github.com/buger/jsonparser"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
+	"reflect"
+	//"os"
+	"unsafe"
 )
 
 func main() {
 	//var period = flag.Float64("t", 1.0, "update info every t seconds")
-	var port = flag.Int("port", 9999, "port")
+	var port = flag.Int("port", 19999, "port")
 
-	instance := fmt.Sprintf(INSTANCE, *port, "s01", DOMAIN, API_VERSION)
-	info_query := fmt.Sprintf("%s/%s", instance, ALL_METRIC_POINT)
-	flag.Parse()
+	var sNodeInfoMgr *C.node_info_msg_t
+	C.slurm_load_node(0, &sNodeInfoMgr, C.SHOW_DETAIL)
+	sData := unsafe.Pointer(sNodeInfoMgr.node_array)
+	numNodes := int(sNodeInfoMgr.record_count)
 
-	// Get netdata
-	resp, err := http.Get(info_query)
-	if err != nil {
-		log.Fatal(err)
+	nodeArr := *(*[]C.node_info_t)(unsafe.Pointer(&reflect.SliceHeader{
+		Data: uintptr(sData),
+		Len:  numNodes,
+		Cap:  numNodes,
+	}))
+
+	for i := 0; i < numNodes; i++ {
+		hostname := C.GoString(nodeArr[i].node_hostname)
+		if hostname != "s01" {
+			continue
+		}
+		instance := fmt.Sprintf(INSTANCE, *port, hostname, DOMAIN, API_VERSION)
+		info_query := fmt.Sprintf("%s/%s", instance, ALL_METRIC_POINT)
+		flag.Parse()
+
+		// Get netdata
+		resp, err := http.Get(info_query)
+		if err != nil {
+			log.Fatal(err)
+		}
+		resp_data, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		//TODO: remove it
+		if len(resp_data) < 100 { // no netdata
+			//fmt.Printf("%s\n", resp_data)
+			continue
+		}
+
+		//foo, err := jsonparser.GetInt(resp_data, "sensors.coretemp-isa-0000_temperature", "dimensions", "coretemp-isa-0000_temp1", "nae")
+		//fmt.Println(err)
+		//fmt.Println(foo)
+		//fmt.Println("ffdasfs")
+		var nodeInfo NodeInfoType
+		nodeInfo.init(resp_data, nodeArr[i])
+		test_data, _ := json.Marshal(nodeInfo)
+		fmt.Printf("%s\n", test_data)
 	}
-	resp_data, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	//TODO: remove it
-	if len(resp_data) < 100 { // no netdata
-		os.Exit(1)
-	}
-
-	var nodeInfo NodeInfo
-	nodeInfo.init(resp_data)
-	test_data, _ := json.Marshal(nodeInfo)
-	fmt.Printf("%s\n", test_data)
+	// no need defer, directly release
+	C.slurm_free_node_info_msg(sNodeInfoMgr)
 
 	//if resp_data
 	//fmt.Printf("%d", len(resp_data))
