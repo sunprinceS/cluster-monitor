@@ -26,6 +26,13 @@ type NodeInfoType struct {
 	MEM      MEMtype   `json:"mem"`
 }
 
+type NodeJobType struct {
+	JobID string    `json:"jobid"`
+	User  string    `json:"user"`
+	GPUs  []GPUtype `json:"gpus"`
+	Spot  bool      `json:"spot"`
+}
+
 func (info *NodeInfoType) setGres(gres string) { //gpu:1080Ti:2
 	gres = gres[4:]
 	info_ls := strings.Split(gres, ":")
@@ -36,9 +43,15 @@ func (info *NodeInfoType) setGres(gres string) { //gpu:1080Ti:2
 func (info *NodeInfoType) init(netdataJSON []uint8, sData _Ctype_struct_node_info) {
 
 	info.setGres(C.GoString(sData.gres))
-	for _, idx := range parseGresIdx(C.GoString(sData.gres_used)) {
-		info.GPUs[idx].Used = true
+	gpuList := parseGresIdx(C.GoString(sData.gres_used))
+	info.GPUs = make([]GPUtype, info.GPUcnt)
+	if len(gpuList) > 0 {
+		fmt.Println(gpuList)
+		for _, idx := range gpuList {
+			info.GPUs[idx].Used = true
+		}
 	}
+
 	//gresUsedStr := C.GoString(sData.gres_used)
 	info.Hostname = C.GoString(sData.node_hostname)
 
@@ -58,8 +71,6 @@ func (info *NodeInfoType) init(netdataJSON []uint8, sData _Ctype_struct_node_inf
 	C.slurm_get_select_nodeinfo(sData.select_nodeinfo, C.SELECT_NODEDATA_MEM_ALLOC, C.NODE_STATE_ALLOCATED, unsafe.Pointer(&memAllocTmp))
 	info.MEM.Alloc = memAllocTmp
 	info.MEM.Util, _ = jsonparser.GetFloat(netdataJSON, "system.ram", "dimensions", "used", "value")
-
-	info.GPUs = make([]GPUtype, info.GPUcnt)
 
 	//Set GPU
 	for i := 0; i < info.GPUcnt; i++ {

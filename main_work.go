@@ -7,6 +7,8 @@ package main
 #include <slurm/slurm.h>
 */
 import "C"
+
+/*
 import (
 	"encoding/json"
 	"flag"
@@ -15,20 +17,16 @@ import (
 	"log"
 	"net/http"
 	"reflect"
-	"time"
 	//"os"
 	"unsafe"
 )
 
 func main() {
 	//var period = flag.Float64("t", 1.0, "update info every t seconds")
-	timeBaseline := time.Now()
 	var port = flag.Int("port", 19999, "port")
 
 	// NODE info
 	nodeAccessMap := make(map[string]*NodeInfoType)
-	nodeJSONMap := make(map[string][]uint8)
-
 	var nodeList []NodeInfoType
 	var sNodeInfoMgr *C.node_info_msg_t
 	C.slurm_load_node(0, &sNodeInfoMgr, C.SHOW_DETAIL)
@@ -43,6 +41,10 @@ func main() {
 
 	for i := 0; i < numNodes; i++ {
 		hostname := C.GoString(nodeArr[i].node_hostname)
+		//TODO: remove it
+		//if hostname != "s01" {
+		//continue
+		//}
 
 		instance := fmt.Sprintf(INSTANCE, *port, hostname, DOMAIN, API_VERSION)
 		info_query := fmt.Sprintf("%s/%s", instance, ALL_METRIC_POINT)
@@ -57,6 +59,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		defer resp.Body.Close()
 
 		//TODO: remove it
 		if len(resp_data) < 100 { // no netdata
@@ -67,36 +70,58 @@ func main() {
 		var nodeInfo NodeInfoType
 		nodeInfo.init(resp_data, nodeArr[i])
 		nodeList = append(nodeList, nodeInfo)
-		nodeJSONMap[nodeInfo.Hostname] = resp_data
 		nodeAccessMap[nodeInfo.Hostname] = &nodeList[len(nodeList)-1]
 		test_data, _ := json.Marshal(nodeInfo)
 		fmt.Printf("%s\n", test_data)
-		defer resp.Body.Close()
 	}
+	//fmt.Println()
+	//fmt.Println(*nodeAccessMap["s15"])
+	// no need defer, directly release
 	C.slurm_free_node_info_msg(sNodeInfoMgr)
 
-	var sJobInfoMgr *C.job_info_msg_t
-	C.slurm_load_jobs(0, &sJobInfoMgr, C.SHOW_DETAIL)
-	sJobData := unsafe.Pointer(sJobInfoMgr.job_array)
-	numJobs := int(sJobInfoMgr.record_count)
+	//if resp_data
+	//fmt.Printf("%d", len(resp_data))
+	//var nodeInfoList []NodeInfo
+	//var foo_gpus []GPU
+	//foo_gpus = append(foo_gpus,
+	//GPU{
+	//Util:      0,
+	//Mem:       12300,
+	//Model:     "2080Ti",
+	//Mem_total: 21,
+	//Used:      false,
+	//Temp:      123,
+	//},
+	//GPU{
+	//Util:      0,
+	//Mem:       123,
+	//Model:     "2080Ti",
+	//Mem_total: 1,
+	//Used:      false,
+	//Temp:      1,
+	//},
+	//)
+	//nodeInfoList = append(nodeInfoList,
+	//NodeInfo{
+	////nodeInfo := NodeInfo{
+	//Hostname: "s01.speech",
+	//Online:   true,
+	//Normal:   true,
+	//Cpu: CPU{
+	//Util:  75.33,
+	//Temp:  123,
+	//Total: 321,
+	//Alloc: 21,
+	//},
+	//Gpus: foo_gpus,
+	//Mem: MEM{
+	//Total: 32,
+	//Alloc: 12,
+	//Util:  22,
+	//},
+	//})
 
-	jobArr := *(*[]C.slurm_job_info_t)(unsafe.Pointer(&reflect.SliceHeader{
-		Data: uintptr(sJobData),
-		Len:  numJobs,
-		Cap:  numJobs,
-	}))
-
-	fmt.Println("Num jobs", numJobs)
-	for i := 0; i < numJobs; i++ {
-		var jobInfo JobInfoType
-		//TODO: hostname may not be only one node
-		hostname := C.GoString(jobArr[i].nodes)
-		jobInfo.init(nodeJSONMap[hostname], jobArr[i], timeBaseline)
-		test_data, _ := json.Marshal(jobInfo)
-		fmt.Printf("%s\n", test_data)
-		//jobList = append(jobList, jobInfo)
-		//break
-		fmt.Println()
-	}
-
+	//data, _ := json.Marshal(nodeInfoList)
+	//fmt.Printf("%s\n", data)
 }
+*/
