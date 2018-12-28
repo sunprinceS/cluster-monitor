@@ -24,6 +24,7 @@ func main() {
 	//var period = flag.Float64("t", 1.0, "update info every t seconds")
 	timeBaseline := time.Now()
 	var port = flag.Int("port", 19999, "port")
+	var endpoint = flag.String("e", "N/A", "endpoint [node/job]")
 
 	// NODE info
 	nodeAccessMap := make(map[string]*NodeInfoType)
@@ -68,13 +69,17 @@ func main() {
 		nodeInfo.init(resp_data, nodeArr[i])
 		nodeList = append(nodeList, nodeInfo)
 		nodeJSONMap[nodeInfo.Hostname] = resp_data
-		nodeAccessMap[nodeInfo.Hostname] = &nodeList[len(nodeList)-1]
-		test_data, _ := json.Marshal(nodeInfo)
-		fmt.Printf("%s\n", test_data)
 		defer resp.Body.Close()
+	}
+	// Build NodeInfoAccess Map (Note that need to do AFTER ALL NODE APPEND TO
+	// NODELIST), since append will cause reallocate, and the pointer may not be
+	// valid (even not crash...= =) ,and the last will correct
+	for i, nd := range nodeList {
+		nodeAccessMap[nd.Hostname] = &(nodeList[i])
 	}
 	C.slurm_free_node_info_msg(sNodeInfoMgr)
 
+	var jobList []JobInfoType
 	var sJobInfoMgr *C.job_info_msg_t
 	C.slurm_load_jobs(0, &sJobInfoMgr, C.SHOW_DETAIL)
 	sJobData := unsafe.Pointer(sJobInfoMgr.job_array)
@@ -86,12 +91,11 @@ func main() {
 		Cap:  numJobs,
 	}))
 
-	fmt.Println("Num jobs", numJobs)
 	for i := 0; i < numJobs; i++ {
 		var jobInfo JobInfoType
 		//TODO: hostname may not be only one node
 		hostname := C.GoString(jobArr[i].nodes)
-		jobInfo.init(nodeJSONMap[hostname], jobArr[i], timeBaseline)
+		jobInfo.init(nodeJSONMap[hostname], jobArr[i], nodeAccessMap, timeBaseline)
 		test_data, _ := json.Marshal(jobInfo)
 		fmt.Printf("%s\n", test_data)
 		//jobList = append(jobList, jobInfo)
@@ -99,4 +103,10 @@ func main() {
 		fmt.Println()
 	}
 
+	for _, v := range nodeList {
+		test_data, _ := json.Marshal(v)
+		fmt.Printf("%s\n", test_data)
+	}
+
+	C.slurm_free_job_info_msg(sJobInfoMgr)
 }
