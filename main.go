@@ -24,7 +24,7 @@ func main() {
 	//var period = flag.Float64("t", 1.0, "update info every t seconds")
 	timeBaseline := time.Now()
 	var port = flag.Int("port", 19999, "port")
-	var endpoint = flag.String("e", "N/A", "endpoint [node/job]")
+	//var endpoint = flag.String("e", "N/A", "endpoint [node/job]")
 
 	// NODE info
 	nodeAccessMap := make(map[string]*NodeInfoType)
@@ -96,11 +96,7 @@ func main() {
 		//TODO: hostname may not be only one node
 		hostname := C.GoString(jobArr[i].nodes)
 		jobInfo.init(nodeJSONMap[hostname], jobArr[i], nodeAccessMap, timeBaseline)
-		test_data, _ := json.Marshal(jobInfo)
-		fmt.Printf("%s\n", test_data)
-		//jobList = append(jobList, jobInfo)
-		//break
-		fmt.Println()
+		jobList = append(jobList, jobInfo)
 	}
 
 	for _, v := range nodeList {
@@ -109,4 +105,9 @@ func main() {
 	}
 
 	C.slurm_free_job_info_msg(sJobInfoMgr)
+
+	for _, v := range jobList {
+		test_data, _ := json.Marshal(v)
+		fmt.Printf("%s\n", test_data)
+	}
 }

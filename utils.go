@@ -1,27 +1,44 @@
 package main
 
+/*
+#cgo CFLAGS: -g -Wall
+#cgo LDFLAGS: -lslurm
+
+#include <slurm/slurm.h>
+*/
+import "C"
 import (
 	//"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// TODO: maybe move to node_info
-func parseGresIdx(gres string) (ret []int) {
-	gres = strings.Split(gres[:len(gres)-1], "IDX")[1][1:]
-	if gres != "N/A" {
-		//segStrList = strings.Split(gres,",")
-		for _, segStr := range strings.Split(gres, ",") {
-			segStrLs := strings.Split(segStr, "-")
-			if len(segStrLs) == 1 {
-				ele, _ := strconv.Atoi(segStrLs[0])
-				ret = append(ret, ele)
-			} else {
-				start, _ := strconv.Atoi(segStrLs[0])
-				end, _ := strconv.Atoi(segStrLs[1])
-				for i := start; i <= end; i++ {
-					ret = append(ret, i)
-				}
+//TODO: modify to the same as KaiChi's version?
+//func formatTime(t time.Time){
+//}
+
+// Turn minutes to string
+func time2str(mins int64) string {
+	if mins == int64(C.INFINITE) {
+		return "UNLIMITED"
+	} else {
+		return (time.Duration(mins) * time.Minute).String()
+	}
+}
+
+func parseGresIdx(idxAllS string) (ret []int) {
+	//e.g 0-2,3,5-7
+	for _, idxS := range strings.Split(idxAllS, ",") {
+		idxList := strings.Split(idxS, "-")
+		if len(idxList) == 1 {
+			idx, _ := strconv.Atoi(idxList[0])
+			ret = append(ret, idx)
+		} else {
+			start, _ := strconv.Atoi(idxList[0])
+			end, _ := strconv.Atoi(idxList[1])
+			for idx := start; idx <= end; idx++ {
+				ret = append(ret, idx)
 			}
 		}
 	}

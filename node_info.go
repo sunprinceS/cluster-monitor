@@ -367,6 +367,26 @@ import (
 	"unsafe"
 )
 
+// Structure Definition (following format needed by `hqueue`, `jnode`)
+type CPUtype struct {
+	Total int64   `json:"total"`
+	Alloc int64   `json:"alloc"`
+	Util  float64 `json:"util"`
+	Temp  float64 `json:"temp"`
+}
+type MEMtype struct {
+	Total int64   `json:"total"`
+	Alloc int64   `json:"alloc"`
+	Util  float64 `json:"util"`
+}
+type GPUtype struct {
+	Model    string  `json:"model"`
+	Used     bool    `json:"used"`
+	MemTotal int64   `json:"mem_total"`
+	Util     float64 `json:"util"`
+	MEM      float64 `json:"mem"`
+	Temp     float64 `json:"temp"`
+}
 type NodeInfoType struct {
 	Hostname string        `json:"hostname"`
 	Online   bool          `json:"online"`
@@ -379,7 +399,6 @@ type NodeInfoType struct {
 	MEM      MEMtype       `json:"mem"`
 	Jobs     []NodeJobType `json:"jobs"`
 }
-
 type NodeJobType struct {
 	JobID string `json:"jobid"`
 	User  string `json:"user"`
@@ -387,64 +406,69 @@ type NodeJobType struct {
 	Spot  bool   `json:"spot"`
 }
 
-func (info *NodeInfoType) setGres(gres string) { //gpu:1080Ti:2
-	gres = gres[4:]
-	info_ls := strings.Split(gres, ":")
-	info.GPUmodel = info_ls[0]
-	info.GPUcnt, _ = strconv.Atoi(info_ls[1])
+//Utility Function
+func (info *NodeInfoType) setGres(gres string) {
+	//e.g gpu:1080Ti:2
+	gres = gres[4:] //1080Ti:2
+	infoS := strings.Split(gres, ":")
+	info.GPUmodel = infoS[0]
+	info.GPUcnt, _ = strconv.Atoi(infoS[1])
 }
-
+func parseNodeGres(gres string) []int {
+	idxAllS := strings.Split(gres[:len(gres)-1], "IDX:")[1]
+	// N/A, 1-2,4
+	if idxAllS != "N/A" {
+		return parseGresIdx(idxAllS)
+	} else {
+		return nil
+	}
+}
 func checkNormal(state string) bool {
-	abnormalLs := []string{"down", "drain", "drng", "fail", "failg"}
-	for _, abState := range abnormalLs {
-		if state == abState {
+	badStates := []string{"down", "drain", "drng", "fail", "failg"}
+	for _, badState := range badStates {
+		if state == badState {
 			return false
 		}
 	}
 	return true
 }
-func (info *NodeInfoType) init(netdataJSON []uint8, sData _Ctype_struct_node_info) {
 
-	info.State = strings.ToLower(C.GoString(C.node_state_string(sData.node_state)))
+func (info *NodeInfoType) init(ndJSON []uint8, slurmData _Ctype_struct_node_info) {
+	info.Hostname = C.GoString(slurmData.node_hostname)
+	//TODO: still needed?
+	info.Online = true
+	info.State = strings.ToLower(C.GoString(C.node_state_string(slurmData.node_state)))
 	info.Normal = checkNormal(info.State)
-	info.setGres(C.GoString(sData.gres))
-	gpuList := parseGresIdx(C.GoString(sData.gres_used))
+	info.setGres(C.GoString(slurmData.gres))
 	info.GPUs = make([]GPUtype, info.GPUcnt)
-	if len(gpuList) > 0 {
-		fmt.Println(gpuList)
-		for _, idx := range gpuList {
-			info.GPUs[idx].Used = true
-		}
+	for _, idx := range parseGresIdx(C.GoString(slurmData.gres_used)) {
+		info.GPUs[idx].Used = true
 	}
 
-	//gresUsedStr := C.GoString(sData.gres_used)
-	info.Hostname = C.GoString(sData.node_hostname)
-
 	// Set CPU
-	info.CPU.Total = int64(sData.cpus)
-	var cpuAllocTmp int64
-	C.slurm_get_select_nodeinfo(sData.select_nodeinfo, C.SELECT_NODEDATA_SUBCNT, C.NODE_STATE_ALLOCATED, unsafe.Pointer(&cpuAllocTmp))
-	info.CPU.Alloc = cpuAllocTmp
-	//cpuUtilTmp, _ := jsonparser.GetInt(netdataJSON, "system.cpu", "dimension", "user", "value")
-	//info.CPU.Util = float64(cpuUtilTmp*info.CPU.Total) / 100.0
-	info.CPU.Util = float64(sData.cpu_load) / 100.0
-	info.CPU.Temp, _ = jsonparser.GetFloat(netdataJSON, "sensors.coretemp-isa-0000_temperature", "dimensions", "coretemp-isa-0000_temp1", "value")
+	info.CPU.Total = int64(slurmData.cpus)
+	var cpuAlloc int64
+	C.slurm_get_select_nodeinfo(slurmData.select_nodeinfo, C.SELECT_NODEDATA_SUBCNT, C.NODE_STATE_ALLOCATED, unsafe.Pointer(&cpuAlloc))
+	info.CPU.Alloc = cpuAlloc
+	//cpuUtil, _ := jsonparser.GetInt(ndJSON, "system.cpu", "dimension", "user", "value")
+	//info.CPU.Util = float64(cpuUtil*info.CPU.Total) / 100.0
+	info.CPU.Util = float64(slurmData.cpu_load) / 100.0
+	info.CPU.Temp, _ = jsonparser.GetFloat(ndJSON, "sensors.coretemp-isa-0000_temperature", "dimensions", "coretemp-isa-0000_temp1", "value")
 
 	// Set Memory
-	info.MEM.Total = int64(sData.real_memory) - int64(sData.mem_spec_limit)
-	var memAllocTmp int64
-	C.slurm_get_select_nodeinfo(sData.select_nodeinfo, C.SELECT_NODEDATA_MEM_ALLOC, C.NODE_STATE_ALLOCATED, unsafe.Pointer(&memAllocTmp))
-	info.MEM.Alloc = memAllocTmp
-	info.MEM.Util, _ = jsonparser.GetFloat(netdataJSON, "system.ram", "dimensions", "used", "value")
+	info.MEM.Total = int64(slurmData.real_memory) - int64(slurmData.mem_spec_limit)
+	var memAlloc int64
+	C.slurm_get_select_nodeinfo(slurmData.select_nodeinfo, C.SELECT_NODEDATA_MEM_ALLOC, C.NODE_STATE_ALLOCATED, unsafe.Pointer(&memAlloc))
+	info.MEM.Alloc = memAlloc
+	info.MEM.Util, _ = jsonparser.GetFloat(ndJSON, "system.ram", "dimensions", "used", "value")
 
 	//Set GPU
 	for i := 0; i < info.GPUcnt; i++ {
 		info.GPUs[i].Model = info.GPUmodel
-		//TODO: need to modify later (node config generation should handle)
+		//TODO: node config generation should handle this
 		info.GPUs[i].MemTotal = 12300
-		//info.Mem.Util = jsonparser.GetInt(netdataJSON, "system.ram", "dimensions", "used", "value")
-		info.GPUs[i].Util, _ = jsonparser.GetFloat(netdataJSON, fmt.Sprintf("nvidia_smi.gpu%d_mem_utilization", i), "dimensions", fmt.Sprintf("gpu%d_memory_util", i), "value")
-		info.GPUs[i].Mem, _ = jsonparser.GetFloat(netdataJSON, fmt.Sprintf("nvidia_smi.gpu%d_mem_allocated", i), "dimensions", fmt.Sprintf("gpu%d_fb_memory_usage", i), "value")
-		info.GPUs[i].Temp, _ = jsonparser.GetFloat(netdataJSON, fmt.Sprintf("nvidia_smi.gpu%d_temperature", i), "dimensions", fmt.Sprintf("gpu%d_gpu_temp", i), "value")
+		info.GPUs[i].Util, _ = jsonparser.GetFloat(ndJSON, fmt.Sprintf("nvidia_smi.gpu%d_mem_utilization", i), "dimensions", fmt.Sprintf("gpu%d_memory_util", i), "value")
+		info.GPUs[i].MEM, _ = jsonparser.GetFloat(ndJSON, fmt.Sprintf("nvidia_smi.gpu%d_mem_allocated", i), "dimensions", fmt.Sprintf("gpu%d_fb_memory_usage", i), "value")
+		info.GPUs[i].Temp, _ = jsonparser.GetFloat(ndJSON, fmt.Sprintf("nvidia_smi.gpu%d_temperature", i), "dimensions", fmt.Sprintf("gpu%d_gpu_temp", i), "value")
 	}
 }
