@@ -103,7 +103,7 @@ func setNodeInfo() {
 			nodeJSONMap[tmp.hostname] = tmp.data
 		}
 	}
-	fmt.Println(len(JSONcache)) // 0
+	//fmt.Println(len(JSONcache)) // 0
 
 	for i := 0; i < numNodes; i++ {
 		hostname := C.GoString(nodeArr[i].node_hostname)
