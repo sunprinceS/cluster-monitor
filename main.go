@@ -14,8 +14,8 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"sync"
 	"time"
-	//"os"
 	"unsafe"
 )
 
@@ -24,6 +24,7 @@ var nodeAccessMap map[string]*NodeInfoType
 var nodeJSONMap map[string][]uint8
 var nodeList []NodeInfoType
 var jobList []JobInfoType
+var mu sync.RWMutex
 
 func reset() {
 	nodeJSONMap = nil
@@ -37,6 +38,7 @@ func pollInfo() {
 	//TODO: How to lock this
 	for {
 		//s := time.Now()
+		mu.Lock()
 		prepared = false
 		reset()
 		timeBaseline := time.Now()
@@ -49,10 +51,12 @@ func pollInfo() {
 		}
 		setJobInfo(timeBaseline)
 		prepared = true
+		mu.Unlock()
 		//e := time.Now()
 		//fmt.Printf("%s", e.Sub(s).String())
 
 		time.Sleep(DELAY * time.Second)
+		//time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -72,7 +76,6 @@ func setNodeInfo() {
 		Cap:  numNodes,
 	}))
 
-	//TODO: can use goroutine to parallel query
 	for i := 0; i < numNodes; i++ {
 		hostname := C.GoString(nodeArr[i].node_hostname)
 
@@ -95,13 +98,20 @@ func setNodeInfo() {
 			continue
 		}
 
-		var nodeInfo NodeInfoType
-		nodeInfo.init(respData, nodeArr[i])
-		nodeList = append(nodeList, nodeInfo)
-		nodeJSONMap[nodeInfo.Hostname] = respData
+		nodeJSONMap[hostname] = respData
 		resp.Body.Close()
 	}
-	C.slurm_free_node_info_msg(sNodeInfoMgr)
+
+	for i := 0; i < numNodes; i++ {
+		hostname := C.GoString(nodeArr[i].node_hostname)
+
+		if nodeJSONMap[hostname] != nil {
+			var nodeInfo NodeInfoType
+			nodeInfo.init(nodeJSONMap[hostname], nodeArr[i])
+			nodeList = append(nodeList, nodeInfo)
+		}
+	}
+	defer C.slurm_free_node_info_msg(sNodeInfoMgr)
 }
 
 func setJobInfo(now time.Time) {
@@ -115,6 +125,7 @@ func setJobInfo(now time.Time) {
 		Len:  numJobs,
 		Cap:  numJobs,
 	}))
+	//jobList = make([]JobInfoType,numJobs)
 
 	for i := 0; i < numJobs; i++ {
 		var jobInfo JobInfoType
@@ -123,14 +134,15 @@ func setJobInfo(now time.Time) {
 		jobInfo.init(nodeJSONMap[hostname], jobArr[i], nodeAccessMap, now)
 		jobList = append(jobList, jobInfo)
 	}
-	C.slurm_free_job_info_msg(sJobInfoMgr)
+	defer C.slurm_free_job_info_msg(sJobInfoMgr)
 }
 
 func queryNodeInfo(w http.ResponseWriter, r *http.Request) {
-	for !prepared {
-		fmt.Println("Data haven't been prepared yet")
-		time.Sleep(100 * time.Millisecond)
-	}
+	mu.RLock()
+	//for !prepared {
+	//fmt.Println("Data haven't been prepared yet")
+	//time.Sleep(100 * time.Millisecond)
+	//}
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-type", "application/json")
 	data := struct {
@@ -139,13 +151,15 @@ func queryNodeInfo(w http.ResponseWriter, r *http.Request) {
 	}{true, nodeList}
 	res, _ := json.Marshal(data)
 	w.Write(res)
+	defer mu.RUnlock()
 }
 
 func queryJobInfo(w http.ResponseWriter, r *http.Request) {
-	for !prepared {
-		fmt.Println("Data haven't been prepared yet")
-		time.Sleep(100 * time.Millisecond)
-	}
+	mu.RLock()
+	//for !prepared {
+	//fmt.Println("Data haven't been prepared yet")
+	//time.Sleep(100 * time.Millisecond)
+	//}
 	w.WriteHeader(http.StatusOK)
 	user := r.Header.Get("x-user")
 	w.Header().Set("Content-type", "application/json")
@@ -161,6 +175,7 @@ func queryJobInfo(w http.ResponseWriter, r *http.Request) {
 	}{true, userJobList}
 	res, _ := json.Marshal(data)
 	w.Write(res)
+	defer mu.RUnlock()
 }
 
 func main() {
