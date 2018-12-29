@@ -19,6 +19,7 @@ import (
 	"unsafe"
 )
 
+var prepared bool
 var nodeAccessMap map[string]*NodeInfoType
 var nodeJSONMap map[string][]uint8
 var nodeList []NodeInfoType
@@ -32,8 +33,11 @@ func reset() {
 }
 
 func pollInfo() {
+	// approx. 50-100 ms
 	//TODO: How to lock this
 	for {
+		//s := time.Now()
+		prepared = false
 		reset()
 		timeBaseline := time.Now()
 		setNodeInfo()
@@ -44,7 +48,9 @@ func pollInfo() {
 			nodeAccessMap[node.Hostname] = &(nodeList[i])
 		}
 		setJobInfo(timeBaseline)
-		//fmt.Println(jobList)
+		prepared = true
+		//e := time.Now()
+		//fmt.Printf("%s", e.Sub(s).String())
 
 		time.Sleep(DELAY * time.Second)
 	}
@@ -66,7 +72,7 @@ func setNodeInfo() {
 		Cap:  numNodes,
 	}))
 
-	//TODO: can use goroutime to parallel query
+	//TODO: can use goroutine to parallel query
 	for i := 0; i < numNodes; i++ {
 		hostname := C.GoString(nodeArr[i].node_hostname)
 
@@ -121,6 +127,10 @@ func setJobInfo(now time.Time) {
 }
 
 func queryNodeInfo(w http.ResponseWriter, r *http.Request) {
+	for !prepared {
+		fmt.Println("Data haven't been prepared yet")
+		time.Sleep(100 * time.Millisecond)
+	}
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-type", "application/json")
 	data := struct {
@@ -132,6 +142,10 @@ func queryNodeInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func queryJobInfo(w http.ResponseWriter, r *http.Request) {
+	for !prepared {
+		fmt.Println("Data haven't been prepared yet")
+		time.Sleep(100 * time.Millisecond)
+	}
 	w.WriteHeader(http.StatusOK)
 	user := r.Header.Get("x-user")
 	w.Header().Set("Content-type", "application/json")
