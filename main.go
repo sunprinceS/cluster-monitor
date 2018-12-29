@@ -19,21 +19,19 @@ import (
 	"unsafe"
 )
 
-//var prepared bool
 var nodeAccessMap map[string]*NodeInfoType
 
 var nodeJSONMap map[string][]uint8
-
-//var nodeJSONMap sync.Map
 var nodeList []NodeInfoType
 var jobList []JobInfoType
 var mu sync.RWMutex
 
+type JSONdata struct {
+	hostname string
+	data     []uint8
+}
+
 func reset() {
-	//nodeJSONMap.Range(func(key interface{}, value interface{}) bool {
-	//nodeJSONMap.Delete(key)
-	//return true
-	//})
 	nodeJSONMap = nil
 	nodeAccessMap = nil
 	nodeList = nil
@@ -44,18 +42,13 @@ func pollInfo() {
 	for {
 		s := time.Now()
 		mu.Lock()
-		//prepared = false
 		reset()
 		setNodeInfo()
-		// Build NodeInfoAccess Map (Note that need to do AFTER ALL NODE APPEND TO
-		// NODELIST), since append will cause reallocate, and the pointer may not be
-		// valid (even not crash...= =) ,and the last will correct
 		nodeAccessMap = make(map[string]*NodeInfoType)
 		for i, node := range nodeList {
 			nodeAccessMap[node.Hostname] = &(nodeList[i])
 		}
 		setJobInfo()
-		//prepared = true
 		mu.Unlock()
 		e := time.Now()
 		fmt.Printf("%s\n", e.Sub(s).String())
@@ -71,6 +64,8 @@ func setNodeInfo() {
 	C.slurm_load_node(0, &sNodeInfoMgr, C.SHOW_DETAIL)
 	sData := unsafe.Pointer(sNodeInfoMgr.node_array)
 	numNodes := int(sNodeInfoMgr.record_count)
+	nodeJSONMap = make(map[string][]uint8, 0)
+	JSONcache := make(chan JSONdata, numNodes)
 
 	nodeArr := *(*[]C.node_info_t)(unsafe.Pointer(&reflect.SliceHeader{
 		Data: uintptr(sData),
@@ -78,56 +73,46 @@ func setNodeInfo() {
 		Cap:  numNodes,
 	}))
 
-	//nodeJSONMap = make(map[string][]uint8)
-	//for i := 0; i < numNodes; i++ {
-	//nodeJSONMap[C.GoString(nodeArr[i].node_hostname)] = make([]uint8, 0)
-	//}
-
-	//Parallel
-	//nodeListTmp := make([]NodeInfoType, numNodes)
-	//wg := sync.WaitGroup{}
-
-	//TODO: since concurrent write to map will cause race issue
-	//and the solution using sync.Map seems not help the efficiency, give up
-	//parallel here
 	for i := 0; i < numNodes; i++ {
-		//wg.Add(1)
-		//go func(i int) {
-		hostname := C.GoString(nodeArr[i].node_hostname)
-		//fmt.Println(hostname)
+		go func(hostname string) {
+			instance := fmt.Sprintf(INSTANCE, PORT, hostname, DOMAIN, API_VERSION)
+			infoQuery := fmt.Sprintf("%s/%s", instance, ALL_METRIC_POINT)
 
-		instance := fmt.Sprintf(INSTANCE, PORT, hostname, DOMAIN, API_VERSION)
-		infoQuery := fmt.Sprintf("%s/%s", instance, ALL_METRIC_POINT)
+			// Get netdata
+			resp, err := http.Get(infoQuery)
+			if err != nil {
+				log.Fatal(err)
+			}
+			respData, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Fatal(err)
+			}
+			JSONcache <- JSONdata{hostname, respData}
+			defer resp.Body.Close()
+		}(C.GoString(nodeArr[i].node_hostname))
+	}
 
-		// Get netdata
-		resp, err := http.Get(infoQuery)
-		if err != nil {
-			log.Fatal(err)
-		}
-		respData, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		//nodeJSONMap.Store(hostname, respData)
-		nodeJSONMap = make(map[string][]uint8, 0)
-		nodeJSONMap[hostname] = respData
-
+	//TODO: should await here?
+	// Dump channel
+	// since map is not thread-safe (even we have unique key when inserting)
+	// see `go build -race`
+	for i := 0; i < numNodes; i++ {
+		tmp := <-JSONcache
 		//TODO: remove it
-		if len(respData) > 100 { // no netdata
+		if len(tmp.data) > 100 {
+			nodeJSONMap[tmp.hostname] = tmp.data
+		}
+	}
+	fmt.Println(len(JSONcache)) // 0
+
+	for i := 0; i < numNodes; i++ {
+		hostname := C.GoString(nodeArr[i].node_hostname)
+		if ndData, ok := nodeJSONMap[hostname]; ok {
 			var nodeInfo NodeInfoType
-			nodeInfo.init(respData, nodeArr[i])
+			nodeInfo.init(ndData, nodeArr[i])
 			nodeList = append(nodeList, nodeInfo)
 		}
-		resp.Body.Close()
-		//defer wg.Done()
-		//}(n)
 	}
-	//wg.Wait()
-	//TODO: reallocate (should remove later?)
-	//for _, nodeInfo := range nodeListTmp {
-	//nodeList = append(nodeList, nodeInfo)
-	//}
 	defer C.slurm_free_node_info_msg(sNodeInfoMgr)
 }
 
@@ -151,21 +136,14 @@ func setJobInfo() {
 		var jobInfo JobInfoType
 		//TODO: hostname may not be only one node
 		hostname := C.GoString(jobArr[j].nodes)
-		//var jsonMap []uint8
-		//jsonMap, _ = nodeJSONMap.Load(hostname)
 		jobInfo.init(nodeJSONMap[hostname], jobArr[j], nodeAccessMap, now)
 		jobList[j] = jobInfo
 	}
-
 	defer C.slurm_free_job_info_msg(sJobInfoMgr)
 }
 
 func queryNodeInfo(w http.ResponseWriter, r *http.Request) {
 	mu.RLock()
-	//for !prepared {
-	//fmt.Println("Data haven't been prepared yet")
-	//time.Sleep(100 * time.Millisecond)
-	//}
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-type", "application/json")
 	data := struct {
@@ -179,10 +157,6 @@ func queryNodeInfo(w http.ResponseWriter, r *http.Request) {
 
 func queryJobInfo(w http.ResponseWriter, r *http.Request) {
 	mu.RLock()
-	//for !prepared {
-	//fmt.Println("Data haven't been prepared yet")
-	//time.Sleep(100 * time.Millisecond)
-	//}
 	w.WriteHeader(http.StatusOK)
 	user := r.Header.Get("x-user")
 	w.Header().Set("Content-type", "application/json")

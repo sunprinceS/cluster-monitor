@@ -205,7 +205,7 @@ func (info *JobInfoType) init(ndJSON []uint8, slurmInfo _Ctype_struct_job_info, 
 	}
 	info.Remaining = time2str(int64(slurmInfo.time_limit))
 
-	if len(ndJSON) > 100 {
+	if ndJSON != nil {
 		//FIXME: brute force enumerate possible usage here, should use ObjectEach to summation over values
 		cpuSysUtil, _ := jsonparser.GetFloat(ndJSON, fmt.Sprintf(JOB_USAGE, uid, info.JobID, "cpu"), "dimensions", "system", "value")
 		cpuUserUtil, _ := jsonparser.GetFloat(ndJSON, fmt.Sprintf(JOB_USAGE, uid, info.JobID, "cpu"), "dimensions", "user", "value")
