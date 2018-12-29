@@ -9,7 +9,6 @@ package main
 import "C"
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -20,17 +19,42 @@ import (
 	"unsafe"
 )
 
-func main() {
-	//var period = flag.Float64("t", 1.0, "update info every t seconds")
-	timeBaseline := time.Now()
-	var port = flag.Int("port", 19999, "port")
-	//var endpoint = flag.String("e", "N/A", "endpoint [node/job]")
+var nodeAccessMap map[string]*NodeInfoType
+var nodeJSONMap map[string][]uint8
+var nodeList []NodeInfoType
+var jobList []JobInfoType
 
-	// NODE info
-	nodeAccessMap := make(map[string]*NodeInfoType)
-	nodeJSONMap := make(map[string][]uint8)
+func reset() {
+	nodeJSONMap = nil
+	nodeAccessMap = nil
+	nodeList = nil
+	jobList = nil
+}
 
-	var nodeList []NodeInfoType
+func pollInfo() {
+	//TODO: How to lock this
+	for {
+		reset()
+		timeBaseline := time.Now()
+		setNodeInfo()
+		// Build NodeInfoAccess Map (Note that need to do AFTER ALL NODE APPEND TO
+		// NODELIST), since append will cause reallocate, and the pointer may not be
+		// valid (even not crash...= =) ,and the last will correct
+		for i, node := range nodeList {
+			nodeAccessMap[node.Hostname] = &(nodeList[i])
+		}
+		setJobInfo(timeBaseline)
+		//fmt.Println(jobList)
+
+		time.Sleep(DELAY * time.Second)
+	}
+}
+
+func setNodeInfo() {
+
+	nodeAccessMap = make(map[string]*NodeInfoType)
+	nodeJSONMap = make(map[string][]uint8)
+
 	var sNodeInfoMgr *C.node_info_msg_t
 	C.slurm_load_node(0, &sNodeInfoMgr, C.SHOW_DETAIL)
 	sData := unsafe.Pointer(sNodeInfoMgr.node_array)
@@ -42,44 +66,39 @@ func main() {
 		Cap:  numNodes,
 	}))
 
+	//TODO: can use goroutime to parallel query
 	for i := 0; i < numNodes; i++ {
 		hostname := C.GoString(nodeArr[i].node_hostname)
 
-		instance := fmt.Sprintf(INSTANCE, *port, hostname, DOMAIN, API_VERSION)
-		info_query := fmt.Sprintf("%s/%s", instance, ALL_METRIC_POINT)
-		flag.Parse()
+		instance := fmt.Sprintf(INSTANCE, PORT, hostname, DOMAIN, API_VERSION)
+		infoQuery := fmt.Sprintf("%s/%s", instance, ALL_METRIC_POINT)
 
 		// Get netdata
-		resp, err := http.Get(info_query)
+		resp, err := http.Get(infoQuery)
 		if err != nil {
 			log.Fatal(err)
 		}
-		resp_data, err := ioutil.ReadAll(resp.Body)
+		respData, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			log.Fatal(err)
 		}
 
 		//TODO: remove it
-		if len(resp_data) < 100 { // no netdata
-			//fmt.Printf("%s\n", resp_data)
+		if len(respData) < 100 { // no netdata
+			//fmt.Printf("%s\n", respData)
 			continue
 		}
 
 		var nodeInfo NodeInfoType
-		nodeInfo.init(resp_data, nodeArr[i])
+		nodeInfo.init(respData, nodeArr[i])
 		nodeList = append(nodeList, nodeInfo)
-		nodeJSONMap[nodeInfo.Hostname] = resp_data
-		defer resp.Body.Close()
-	}
-	// Build NodeInfoAccess Map (Note that need to do AFTER ALL NODE APPEND TO
-	// NODELIST), since append will cause reallocate, and the pointer may not be
-	// valid (even not crash...= =) ,and the last will correct
-	for i, nd := range nodeList {
-		nodeAccessMap[nd.Hostname] = &(nodeList[i])
+		nodeJSONMap[nodeInfo.Hostname] = respData
+		resp.Body.Close()
 	}
 	C.slurm_free_node_info_msg(sNodeInfoMgr)
+}
 
-	var jobList []JobInfoType
+func setJobInfo(now time.Time) {
 	var sJobInfoMgr *C.job_info_msg_t
 	C.slurm_load_jobs(0, &sJobInfoMgr, C.SHOW_DETAIL)
 	sJobData := unsafe.Pointer(sJobInfoMgr.job_array)
@@ -95,19 +114,51 @@ func main() {
 		var jobInfo JobInfoType
 		//TODO: hostname may not be only one node
 		hostname := C.GoString(jobArr[i].nodes)
-		jobInfo.init(nodeJSONMap[hostname], jobArr[i], nodeAccessMap, timeBaseline)
+		jobInfo.init(nodeJSONMap[hostname], jobArr[i], nodeAccessMap, now)
 		jobList = append(jobList, jobInfo)
 	}
-
-	for _, v := range nodeList {
-		test_data, _ := json.Marshal(v)
-		fmt.Printf("%s\n", test_data)
-	}
-
 	C.slurm_free_job_info_msg(sJobInfoMgr)
+}
 
-	for _, v := range jobList {
-		test_data, _ := json.Marshal(v)
-		fmt.Printf("%s\n", test_data)
+func queryNodeInfo(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-type", "application/json")
+	data := struct {
+		Success   bool           `json:"success"`
+		NodeInfos []NodeInfoType `json:"nodeInfos"`
+	}{true, nodeList}
+	res, _ := json.Marshal(data)
+	w.Write(res)
+}
+
+func queryJobInfo(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	user := r.Header.Get("x-user")
+	w.Header().Set("Content-type", "application/json")
+	userJobList := make([]JobInfoType, 0)
+	for _, job := range jobList {
+		if job.User == user {
+			userJobList = append(userJobList, job)
+		}
 	}
+	data := struct {
+		Success bool          `json:"success"`
+		JobInfo []JobInfoType `json:"jobInfo"`
+	}{true, userJobList}
+	res, _ := json.Marshal(data)
+	w.Write(res)
+}
+
+func main() {
+	go pollInfo()
+
+	http.HandleFunc("/monitor/nodes", queryNodeInfo)
+	http.HandleFunc("/monitor/jobs", queryJobInfo)
+	//TODO: add not found handler? (maybe no needed)
+	err := http.ListenAndServe("localhost:8888", nil)
+
+	if err != nil {
+		log.Fatal("Server Error", err)
+	}
+
 }
