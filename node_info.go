@@ -441,7 +441,7 @@ func (info *NodeInfoType) init(ndJSON []uint8, slurmData _Ctype_struct_node_info
 	info.Normal = checkNormal(info.State)
 	info.setGres(C.GoString(slurmData.gres))
 	info.GPUs = make([]GPUtype, info.GPUcnt)
-	for _, idx := range parseGresIdx(C.GoString(slurmData.gres_used)) {
+	for _, idx := range parseNodeGres(C.GoString(slurmData.gres_used)) {
 		info.GPUs[idx].Used = true
 	}
 
